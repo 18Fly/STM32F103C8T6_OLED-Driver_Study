@@ -97,4 +97,16 @@ void OLED_ShowChinese(uint8_t X, uint8_t Page, uint8_t *ChineseWord);
  */
 void OLED_Update(void);
 
+/**
+ * @brief 使用I2C的DMA直接传输数据
+ *
+ */
+void OLED_WriteData_DMA(void);
+
+/**
+ * @brief 使用DMA更新屏幕信息
+ *
+ */
+void OLED_Update_DMA(void);
+
 #endif // !__OLED_H

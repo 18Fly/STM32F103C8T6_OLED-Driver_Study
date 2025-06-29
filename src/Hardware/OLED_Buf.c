@@ -5,17 +5,24 @@ uint8_t OLED_Buf[8][128] = {0};
 void OLED_Init(void)
 {
     // 1. 使能 GPIOB 和 I2C1 时钟
+    // ++ 配置DMA
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
 
     // 2. 配置 PB6 (SCL) 和 PB7 (SDA) 为复用开漏输出
+    // ++ 配置DMA
     GPIO_InitTypeDef GPIO_InitStructure;
     GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_6 | GPIO_Pin_7;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_OD; // 复用开漏
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOB, &GPIO_InitStructure);
 
+    DMA_InitTypeDef DMA_InitStructure;
+    DMA_DeInit(DMA1_Channel6);
+
     // 3. 配置 I2C1
+    // ++ 配置DMA
     I2C_InitTypeDef I2C_InitStructure;
     I2C_InitStructure.I2C_Mode                = I2C_Mode_I2C;
     I2C_InitStructure.I2C_DutyCycle           = I2C_DutyCycle_2;
@@ -25,8 +32,23 @@ void OLED_Init(void)
     I2C_InitStructure.I2C_ClockSpeed          = 100000; // 100kHz
     I2C_Init(I2C1, &I2C_InitStructure);
 
+    DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&I2C1->DR;
+    DMA_InitStructure.DMA_MemoryBaseAddr     = (uint32_t)&OLED_Buf;
+    DMA_InitStructure.DMA_DIR                = DMA_DIR_PeripheralDST;
+    DMA_InitStructure.DMA_BufferSize         = 128;
+    DMA_InitStructure.DMA_PeripheralInc      = DMA_PeripheralInc_Disable;
+    DMA_InitStructure.DMA_MemoryInc          = DMA_MemoryInc_Enable;
+    DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_Byte;
+    DMA_InitStructure.DMA_MemoryDataSize     = DMA_MemoryDataSize_Byte;
+    DMA_InitStructure.DMA_Mode               = DMA_Mode_Normal;
+    DMA_InitStructure.DMA_Priority           = DMA_Priority_High;
+    DMA_InitStructure.DMA_M2M                = DMA_M2M_Disable;
+    DMA_Init(DMA1_Channel6, &DMA_InitStructure);
+
     // 4. 使能 I2C1
     I2C_Cmd(I2C1, ENABLE);
+    // ++ 配置I2C的DMA 使能
+    I2C_DMACmd(I2C1, ENABLE);
 
     // 配置OLED通讯的基础设置
     // Power up VDD
@@ -111,6 +133,33 @@ void OLED_WriteData(uint8_t *Data)
     I2C_GenerateSTOP(I2C1, ENABLE);
 }
 
+void OLED_WriteData_DMA(void)
+{
+    for (uint8_t page = 0; page < 8; page++) {
+        OLED_SetPoint(0, page); // 设置页地址
+
+        I2C_GenerateSTART(I2C1, ENABLE);
+        WAIT_EVENT(I2C_EVENT_MASTER_MODE_SELECT);
+        I2C_Send7bitAddress(I2C1, OLED_ADDRESS, I2C_Direction_Transmitter);
+        WAIT_EVENT(I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED);
+        I2C_SendData(I2C1, 0x40); // 控制字节
+        WAIT_EVENT(I2C_EVENT_MASTER_BYTE_TRANSMITTING);
+
+        DMA1_Channel6->CMAR  = (uint32_t)&OLED_Buf[page];
+        DMA1_Channel6->CNDTR = 128;
+
+        DMA_Cmd(DMA1_Channel6, ENABLE);
+        while (!DMA_GetFlagStatus(DMA1_FLAG_TC6));
+        DMA_Cmd(DMA1_Channel6, DISABLE);
+
+        // ★★ 等待I2C数据全部发送完成 ★★ tips:不等待的话每页最后一列附近会产生随机小乱码
+        while (I2C_GetFlagStatus(I2C1, I2C_FLAG_BTF) == RESET);
+
+        I2C_GenerateSTOP(I2C1, ENABLE);
+        DMA_ClearFlag(DMA1_FLAG_TC6);
+    }
+}
+
 void OLED_SetPoint(uint8_t X, uint8_t Page)
 {
     OLED_WriteCommand(0x00 | X & 0x0F);
@@ -189,4 +238,9 @@ void OLED_Update(void)
         OLED_SetPoint(0, i);
         OLED_WriteData(OLED_Buf[i]);
     }
+}
+
+void OLED_Update_DMA(void)
+{
+    OLED_WriteData_DMA();
 }
