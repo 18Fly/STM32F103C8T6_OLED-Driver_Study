@@ -152,7 +152,7 @@ void OLED_WriteData_DMA(void)
         while (!DMA_GetFlagStatus(DMA1_FLAG_TC6));
         DMA_Cmd(DMA1_Channel6, DISABLE);
 
-        // ★★ 等待I2C数据全部发送完成 ★★ tips:不等待的话每页最后一列附近会产生随机小乱码
+        // ★★ 等待I2C数据全部发送完成 ★★ tips:不等待的话会过早发送停止信号导致每页最后一列附近产生随机小乱码
         while (I2C_GetFlagStatus(I2C1, I2C_FLAG_BTF) == RESET);
 
         I2C_GenerateSTOP(I2C1, ENABLE);
